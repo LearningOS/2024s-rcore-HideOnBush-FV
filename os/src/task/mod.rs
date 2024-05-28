@@ -19,7 +19,7 @@ use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
 use lazy_static::*;
 use switch::__switch;
-pub use task::{TaskControlBlock, TaskStatus};
+pub use task::{TaskControlBlock, TaskStatus, TaskInfo};
 
 pub use context::TaskContext;
 
@@ -54,7 +54,9 @@ lazy_static! {
         let mut tasks = [TaskControlBlock {
             task_cx: TaskContext::zero_init(),
             task_status: TaskStatus::UnInit,
+            task_info: TaskInfo::new()
         }; MAX_APP_NUM];
+        println!("num_app: {}", num_app);
         for (i, task) in tasks.iter_mut().enumerate() {
             task.task_cx = TaskContext::goto_restore(init_app_cx(i));
             task.task_status = TaskStatus::Ready;
@@ -101,6 +103,7 @@ impl TaskManager {
     fn mark_current_exited(&self) {
         let mut inner = self.inner.exclusive_access();
         let current = inner.current_task;
+        println!("task exit: {}", current);
         inner.tasks[current].task_status = TaskStatus::Exited;
     }
 
@@ -134,6 +137,39 @@ impl TaskManager {
         } else {
             panic!("All applications completed!");
         }
+    }
+
+
+    /// update_task_info when sys_call 
+    pub fn update_task_info(&self, syscall_id: usize, ctime: isize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].task_info.syscall_times[syscall_id] += 1;
+        if ctime > -1 {
+            inner.tasks[current].task_info.time = ctime as usize;
+        }
+        inner.tasks[current].task_info.status = TaskStatus::Running;
+    }
+
+    /// get task_info for a certain task
+    pub fn get_task_info(&self, ti: *mut TaskInfo) {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].task_info.syscall_times.iter().enumerate().for_each(|(i, e)| {
+            unsafe{
+                (*ti).syscall_times[i] = *e;
+            }
+        });
+        unsafe {
+            (*ti).time = inner.tasks[current].task_info.time;
+            (*ti).status = inner.tasks[current].task_info.status;
+        }
+    }
+    
+    /// get current_task for debug
+    pub fn get_current_task(&self) -> usize {
+        let inner = self.inner.exclusive_access();
+        inner.current_task
     }
 }
 
